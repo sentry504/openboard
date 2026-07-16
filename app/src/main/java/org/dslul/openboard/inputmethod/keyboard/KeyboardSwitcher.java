@@ -19,6 +19,7 @@ package org.dslul.openboard.inputmethod.keyboard;
 import android.content.Context;
 import android.content.res.Configuration;
 import android.content.res.Resources;
+import android.os.Build;
 import android.util.Log;
 import android.view.ContextThemeWrapper;
 import android.view.LayoutInflater;
@@ -27,6 +28,7 @@ import android.view.inputmethod.EditorInfo;
 
 import org.dslul.openboard.inputmethod.event.Event;
 import org.dslul.openboard.inputmethod.keyboard.KeyboardLayoutSet.KeyboardLayoutSetException;
+import org.dslul.openboard.inputmethod.keyboard.barcode.BarcodeScannerView;
 import org.dslul.openboard.inputmethod.keyboard.clipboard.ClipboardHistoryView;
 import org.dslul.openboard.inputmethod.keyboard.emoji.EmojiPalettesView;
 import org.dslul.openboard.inputmethod.keyboard.internal.KeyboardState;
@@ -57,6 +59,7 @@ public final class KeyboardSwitcher implements KeyboardState.SwitchActions {
     private MainKeyboardView mKeyboardView;
     private EmojiPalettesView mEmojiPalettesView;
     private ClipboardHistoryView mClipboardHistoryView;
+    private BarcodeScannerView mBarcodeScannerView;
     private LatinIME mLatinIME;
     private RichInputMethodManager mRichImm;
     private boolean mIsHardwareAcceleratedDrawingEnabled;
@@ -151,11 +154,14 @@ public final class KeyboardSwitcher implements KeyboardState.SwitchActions {
         if (mKeyboardView != null) {
             mKeyboardView.onHideWindow();
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && mBarcodeScannerView != null) {
+            mBarcodeScannerView.stopScanner();
+        }
     }
 
     private void setKeyboard(
-            @Nonnull final int keyboardId,
-            @Nonnull final KeyboardSwitchState toggleState) {
+            final int keyboardId,
+            final KeyboardSwitchState toggleState) {
         // Make {@link MainKeyboardView} visible and hide {@link EmojiPalettesView}.
         final SettingsValues currentSettingsValues = Settings.getInstance().getCurrent();
         setMainKeyboardFrame(currentSettingsValues, toggleState);
@@ -163,6 +169,9 @@ public final class KeyboardSwitcher implements KeyboardState.SwitchActions {
         final MainKeyboardView keyboardView = mKeyboardView;
         final Keyboard oldKeyboard = keyboardView.getKeyboard();
         final Keyboard newKeyboard = mKeyboardLayoutSet.getKeyboard(keyboardId);
+        if (newKeyboard == null) {
+            return;
+        }
         keyboardView.setKeyboard(newKeyboard);
         mCurrentInputView.setKeyboardTopPadding(newKeyboard.mTopPadding);
         keyboardView.setKeyPreviewPopupEnabled(currentSettingsValues.mKeyPreviewPopupOn);
@@ -297,6 +306,8 @@ public final class KeyboardSwitcher implements KeyboardState.SwitchActions {
         mEmojiPalettesView.stopEmojiPalettes();
         mClipboardHistoryView.setVisibility(View.GONE);
         mClipboardHistoryView.stopClipboardHistory();
+        mBarcodeScannerView.setVisibility(View.GONE);
+        mBarcodeScannerView.stopScanner();
     }
 
     // Implements {@link KeyboardState.SwitchActions}.
@@ -336,11 +347,35 @@ public final class KeyboardSwitcher implements KeyboardState.SwitchActions {
         mClipboardHistoryView.setVisibility(View.VISIBLE);
     }
 
+    // Implements {@link KeyboardState.SwitchActions}.
+    @Override
+    public void setBarcodeKeyboard() {
+        if (DEBUG_ACTION) {
+            Log.d(TAG, "setBarcodeKeyboard");
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
+            return;
+        }
+        mMainKeyboardFrame.setVisibility(View.GONE);
+        mKeyboardView.setVisibility(View.GONE);
+        mEmojiPalettesView.setVisibility(View.GONE);
+        mClipboardHistoryView.setVisibility(View.GONE);
+        mBarcodeScannerView.setVisibility(View.VISIBLE);
+        mBarcodeScannerView.startScanner(mLatinIME);
+    }
+
+    private void stopBarcodeScanner() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && mBarcodeScannerView != null) {
+            mBarcodeScannerView.stopScanner();
+        }
+    }
+
     public enum KeyboardSwitchState {
         HIDDEN(-1),
         SYMBOLS_SHIFTED(KeyboardId.ELEMENT_SYMBOLS_SHIFTED),
         EMOJI(KeyboardId.ELEMENT_EMOJI_RECENTS),
         CLIPBOARD(KeyboardId.ELEMENT_CLIPBOARD),
+        BARCODE(KeyboardId.ELEMENT_BARCODE),
         OTHER(-1);
 
         final int mKeyboardId;
@@ -351,7 +386,7 @@ public final class KeyboardSwitcher implements KeyboardState.SwitchActions {
     }
 
     public KeyboardSwitchState getKeyboardSwitchState() {
-        boolean hidden = !isShowingEmojiPalettes() && !isShowingClipboardHistory()
+        boolean hidden = !isShowingEmojiPalettes() && !isShowingClipboardHistory() && !isShowingBarcodeScanner()
                 && (mKeyboardLayoutSet == null
                 || mKeyboardView == null
                 || !mKeyboardView.isShown());
@@ -361,13 +396,15 @@ public final class KeyboardSwitcher implements KeyboardState.SwitchActions {
             return KeyboardSwitchState.EMOJI;
         } else if (isShowingClipboardHistory()) {
             return KeyboardSwitchState.CLIPBOARD;
+        } else if (isShowingBarcodeScanner()) {
+            return KeyboardSwitchState.BARCODE;
         } else if (isShowingKeyboardId(KeyboardId.ELEMENT_SYMBOLS_SHIFTED)) {
             return KeyboardSwitchState.SYMBOLS_SHIFTED;
         }
         return KeyboardSwitchState.OTHER;
     }
 
-    public void onToggleKeyboard(@Nonnull final KeyboardSwitchState toggleState) {
+    public void onToggleKeyboard(final KeyboardSwitchState toggleState) {
         KeyboardSwitchState currentState = getKeyboardSwitchState();
         Log.w(TAG, "onToggleKeyboard() : Current = " + currentState + " : Toggle = " + toggleState);
         if (currentState == toggleState) {
@@ -380,12 +417,17 @@ public final class KeyboardSwitcher implements KeyboardState.SwitchActions {
                 setEmojiKeyboard();
             } else if (toggleState == KeyboardSwitchState.CLIPBOARD) {
                 setClipboardKeyboard();
+            } else if (toggleState == KeyboardSwitchState.BARCODE) {
+                setBarcodeKeyboard();
             } else {
                 mEmojiPalettesView.stopEmojiPalettes();
                 mEmojiPalettesView.setVisibility(View.GONE);
 
                 mClipboardHistoryView.stopClipboardHistory();
                 mClipboardHistoryView.setVisibility(View.GONE);
+
+                stopBarcodeScanner();
+                mBarcodeScannerView.setVisibility(View.GONE);
 
                 mMainKeyboardFrame.setVisibility(View.VISIBLE);
                 mKeyboardView.setVisibility(View.VISIBLE);
@@ -492,6 +534,10 @@ public final class KeyboardSwitcher implements KeyboardState.SwitchActions {
         return mClipboardHistoryView != null && mClipboardHistoryView.isShown();
     }
 
+    public boolean isShowingBarcodeScanner() {
+        return mBarcodeScannerView != null && mBarcodeScannerView.isShown();
+    }
+
     public boolean isShowingMoreKeysPanel() {
         if (isShowingEmojiPalettes() || isShowingClipboardHistory()) {
             return false;
@@ -504,6 +550,8 @@ public final class KeyboardSwitcher implements KeyboardState.SwitchActions {
             return mEmojiPalettesView;
         } else if (isShowingClipboardHistory()) {
             return mClipboardHistoryView;
+        } else if (isShowingBarcodeScanner()) {
+            return mBarcodeScannerView;
         }
         return mKeyboardViewWrapper;
     }
@@ -539,6 +587,7 @@ public final class KeyboardSwitcher implements KeyboardState.SwitchActions {
         mClipboardHistoryView = mCurrentInputView.findViewById(R.id.clipboard_history_view);
 
         mKeyboardViewWrapper = mCurrentInputView.findViewById(R.id.keyboard_view_wrapper);
+        mBarcodeScannerView = mCurrentInputView.findViewById(R.id.barcode_scanner_view);
         mKeyboardViewWrapper.setKeyboardActionListener(mLatinIME);
         mKeyboardView = mCurrentInputView.findViewById(R.id.keyboard_view);
         mKeyboardView.setHardwareAcceleratedDrawingEnabled(isHardwareAcceleratedDrawingEnabled);
@@ -549,6 +598,9 @@ public final class KeyboardSwitcher implements KeyboardState.SwitchActions {
         mClipboardHistoryView.setHardwareAcceleratedDrawingEnabled(
                 isHardwareAcceleratedDrawingEnabled);
         mClipboardHistoryView.setKeyboardActionListener(mLatinIME);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            mBarcodeScannerView.setKeyboardActionListener(mLatinIME);
+        }
         return mCurrentInputView;
     }
 

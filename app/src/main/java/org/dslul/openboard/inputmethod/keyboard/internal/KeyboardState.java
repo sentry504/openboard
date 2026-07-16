@@ -52,6 +52,7 @@ public final class KeyboardState {
         void setAlphabetShiftLockShiftedKeyboard();
         void setEmojiKeyboard();
         void setClipboardKeyboard();
+        void setBarcodeKeyboard();
         void setSymbolsKeyboard();
         void setSymbolsShiftedKeyboard();
 
@@ -90,6 +91,7 @@ public final class KeyboardState {
     private static final int MODE_SYMBOLS = 1;
     private static final int MODE_EMOJI = 2;
     private static final int MODE_CLIPBOARD = 3;
+    private static final int MODE_BARCODE = 4;
     private int mMode = MODE_ALPHABET;
     private AlphabetShiftState mAlphabetShiftState = new AlphabetShiftState();
     private boolean mIsSymbolShifted;
@@ -123,6 +125,9 @@ public final class KeyboardState {
             }
             if (mMode == MODE_CLIPBOARD) {
                 return "CLIPBOARD";
+            }
+            if (mMode == MODE_BARCODE) {
+                return "BARCODE";
             }
             return "SYMBOLS_" + shiftModeToString(mShiftMode);
         }
@@ -198,6 +203,10 @@ public final class KeyboardState {
         }
         if (state.mMode == MODE_CLIPBOARD) {
             setClipboardKeyboard();
+            return;
+        }
+        if (state.mMode == MODE_BARCODE) {
+            setBarcodeKeyboard();
             return;
         }
         // Symbol mode
@@ -371,6 +380,18 @@ public final class KeyboardState {
         mPrevMainKeyboardWasShiftLocked = mAlphabetShiftState.isShiftLocked();
         mAlphabetShiftState.setShiftLocked(false);
         mSwitchActions.setClipboardKeyboard();
+    }
+
+    private void setBarcodeKeyboard() {
+        if (DEBUG_INTERNAL_ACTION) {
+            Log.d(TAG, "setBarcodeKeyboard");
+        }
+        mMode = MODE_BARCODE;
+        mRecapitalizeMode = RecapitalizeStatus.NOT_A_RECAPITALIZE_MODE;
+        // Remember caps lock mode and reset alphabet shift state.
+        mPrevMainKeyboardWasShiftLocked = mAlphabetShiftState.isShiftLocked();
+        mAlphabetShiftState.setShiftLocked(false);
+        mSwitchActions.setBarcodeKeyboard();
     }
 
     private void setOneHandedModeEnabled(boolean enabled) {
@@ -715,6 +736,10 @@ public final class KeyboardState {
                 setClipboardKeyboard();
             }
         } else if (code == Constants.CODE_ALPHA_FROM_CLIPBOARD) {
+            setAlphabetKeyboard(autoCapsFlags, recapitalizeMode);
+        } else if (code == Constants.CODE_BARCODE) {
+            setBarcodeKeyboard();
+        } else if (code == Constants.CODE_ALPHA_FROM_BARCODE) {
             setAlphabetKeyboard(autoCapsFlags, recapitalizeMode);
         } else if (code == Constants.CODE_START_ONE_HANDED_MODE) {
             setOneHandedModeEnabled(true);

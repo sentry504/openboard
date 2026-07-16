@@ -72,6 +72,7 @@ import org.dslul.openboard.inputmethod.latin.define.DebugFlags;
 import org.dslul.openboard.inputmethod.latin.define.ProductionFlags;
 import org.dslul.openboard.inputmethod.latin.inputlogic.InputLogic;
 import org.dslul.openboard.inputmethod.latin.permissions.PermissionsManager;
+import org.dslul.openboard.inputmethod.latin.permissions.PermissionsUtil;
 import org.dslul.openboard.inputmethod.latin.personalization.PersonalizationHelper;
 import org.dslul.openboard.inputmethod.latin.settings.Settings;
 import org.dslul.openboard.inputmethod.latin.settings.SettingsActivity;
@@ -97,6 +98,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
+import androidx.annotation.NonNull;
+import androidx.lifecycle.Lifecycle;
+import androidx.lifecycle.LifecycleOwner;
+import androidx.lifecycle.LifecycleRegistry;
 import javax.annotation.Nonnull;
 
 import static org.dslul.openboard.inputmethod.latin.common.Constants.ImeOption.FORCE_ASCII;
@@ -109,7 +114,7 @@ import static org.dslul.openboard.inputmethod.latin.common.Constants.ImeOption.N
 public class LatinIME extends InputMethodService implements KeyboardActionListener,
         SuggestionStripView.Listener, SuggestionStripViewAccessor,
         DictionaryFacilitator.DictionaryInitializationListener,
-        PermissionsManager.PermissionsResultCallback {
+        PermissionsManager.PermissionsResultCallback, LifecycleOwner {
     static final String TAG = LatinIME.class.getSimpleName();
     private static final boolean TRACE = false;
 
@@ -214,6 +219,13 @@ public class LatinIME extends InputMethodService implements KeyboardActionListen
     private final ClipboardHistoryManager mClipboardHistoryManager = new ClipboardHistoryManager(this);
 
     public final UIHandler mHandler = new UIHandler(this);
+    private LifecycleRegistry mLifecycleRegistry;
+
+    @NonNull
+    @Override
+    public Lifecycle getLifecycle() {
+        return mLifecycleRegistry;
+    }
 
     public static final class UIHandler extends LeakGuardHandlerWrapper<LatinIME> {
         private static final int MSG_UPDATE_SHIFT_STATE = 0;
@@ -614,6 +626,8 @@ public class LatinIME extends InputMethodService implements KeyboardActionListen
 
     @Override
     public void onCreate() {
+        mLifecycleRegistry = new LifecycleRegistry(this);
+        mLifecycleRegistry.setCurrentState(Lifecycle.State.CREATED);
         Settings.init(this);
         DebugFlags.init(DeviceProtectedUtils.getSharedPreferences(this));
         RichInputMethodManager.init(this);
@@ -763,6 +777,7 @@ public class LatinIME extends InputMethodService implements KeyboardActionListen
 
     @Override
     public void onDestroy() {
+        mLifecycleRegistry.setCurrentState(Lifecycle.State.DESTROYED);
         mClipboardHistoryManager.onDestroy();
         mDictionaryFacilitator.closeDictionaries();
         mSettings.onDestroy();
@@ -1067,12 +1082,18 @@ public class LatinIME extends InputMethodService implements KeyboardActionListen
     @Override
     public void onWindowShown() {
         super.onWindowShown();
+        if (mLifecycleRegistry != null) {
+            mLifecycleRegistry.setCurrentState(Lifecycle.State.RESUMED);
+        }
         setNavigationBarVisibility(isInputViewShown());
     }
 
     @Override
     public void onWindowHidden() {
         super.onWindowHidden();
+        if (mLifecycleRegistry != null) {
+            mLifecycleRegistry.setCurrentState(Lifecycle.State.CREATED);
+        }
         final MainKeyboardView mainKeyboardView = mKeyboardSwitcher.getMainKeyboardView();
         if (mainKeyboardView != null) {
             mainKeyboardView.closing();
@@ -1362,8 +1383,19 @@ public class LatinIME extends InputMethodService implements KeyboardActionListen
         return keyboard.getCoordinates(codePoints);
     }
 
+    private void handleBarcodeRequest() {
+        if (PermissionsUtil.checkAllPermissionsGranted(this, android.Manifest.permission.CAMERA)) {
+            mKeyboardSwitcher.onToggleKeyboard(KeyboardSwitcher.KeyboardSwitchState.BARCODE);
+        } else {
+            PermissionsManager.get(this).requestPermissions(this, null, android.Manifest.permission.CAMERA);
+        }
+    }
+
     @Override
     public void onRequestPermissionsResult(boolean allGranted) {
+        if (allGranted) {
+            mKeyboardSwitcher.onToggleKeyboard(KeyboardSwitcher.KeyboardSwitchState.BARCODE);
+        }
         setNeutralSuggestionStrip();
     }
 
@@ -1468,6 +1500,10 @@ public class LatinIME extends InputMethodService implements KeyboardActionListen
     @Override
     public void onCodeInput(final int codePoint, final int x, final int y,
                             final boolean isKeyRepeat) {
+        if (codePoint == Constants.CODE_BARCODE) {
+            handleBarcodeRequest();
+            return;
+        }
         // TODO: this processing does not belong inside LatinIME, the caller should be doing this.
         final MainKeyboardView mainKeyboardView = mKeyboardSwitcher.getMainKeyboardView();
         // x and y include some padding, but everything down the line (especially native
@@ -1608,10 +1644,11 @@ public class LatinIME extends InputMethodService implements KeyboardActionListen
                         && currentSettingsValues.isSuggestionsEnabledPerUserSettings();
         final boolean shouldShowSuggestionsStripUnlessPassword = currentSettingsValues.mShowsVoiceInputKey
                 || currentSettingsValues.mShowsClipboardKey
+                || (currentSettingsValues.mShowsBarcodeKey && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP)
                 || shouldShowSuggestionCandidates
                 || currentSettingsValues.isApplicationSpecifiedCompletionsOn();
         final boolean shouldShowSuggestionsStrip = shouldShowSuggestionsStripUnlessPassword
-                && (!currentSettingsValues.mInputAttributes.mIsPasswordField || currentSettingsValues.mShowsClipboardKey);
+                && (!currentSettingsValues.mInputAttributes.mIsPasswordField || currentSettingsValues.mShowsClipboardKey || (currentSettingsValues.mShowsBarcodeKey && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP));
         mSuggestionStripView.updateVisibility(shouldShowSuggestionsStrip, isFullscreenMode());
         if (!shouldShowSuggestionsStrip) {
             return;

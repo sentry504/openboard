@@ -91,6 +91,13 @@
             android:defaultValue="false"
             android:persistent="true" />
 
+        <CheckBoxPreference
+            android:key="pref_show_barcode_key"
+            android:title="@string/show_barcode_key"
+            android:summary="@string/show_barcode_key_summary"
+            android:defaultValue="true"
+            android:persistent="true" />
+
     </PreferenceCategory>
 
     <PreferenceCategory android:title="@string/settings_category_clipboard_history">
